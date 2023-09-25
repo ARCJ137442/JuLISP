@@ -152,16 +152,7 @@ begin
             # * 非空白、非括弧字符：解析原子值
             elseif !isspace(si)
                 # 递归解析
-                str::JuLISPAtom, i_sub_end = (
-                    # 双引号⇒字符串（复用end_i变量）
-                    si === S_EXPR_QUOTE ? _parse_escaped_s_expr_string(s, i; end_i) :
-                    # 单引号⇒字符（复用end_i变量）
-                    si === S_EXPR_SEMI_QUOTE ? _parse_escaped_s_expr_char(s, i; end_i) :
-                    # 数字⇒数值（复用end_i变量）
-                    isdigit(si) ? _parse_escaped_s_expr_number(s, i; end_i) :
-                    # 否则⇒符号
-                    _parse_s_expr_symbol(s, i; end_i)
-                )
+                str::JuLISPAtom, i_sub_end = parse_s_expr_atom(s, si; start_i=i, end_i=end_i)
                 # 添加值
                 push!(result, str)
                 # 跳过已解析处
@@ -170,6 +161,17 @@ begin
             # 空白符⇒跳过
         end
     end
+
+    parse_s_expr_atom(s::AbstractString, si::AbstractChar=s[1]; start_i=1, end_i=lastindex(s))::Tuple{JuLISPAtom,Int} = (
+        # 双引号⇒字符串（复用end_i变量）
+        si === S_EXPR_QUOTE ? _parse_escaped_s_expr_string(s, start_i; end_i) :
+        # 单引号⇒字符（复用end_i变量）
+        si === S_EXPR_SEMI_QUOTE ? _parse_escaped_s_expr_char(s, start_i; end_i) :
+        # 数字⇒数值（复用end_i变量）
+        isdigit(si) ? _parse_escaped_s_expr_number(s, start_i; end_i) :
+        # 否则⇒符号
+        _parse_s_expr_symbol(s, start_i; end_i)
+    )
 
     """
     特殊：解析S-表达式中的原子值（表达式）
