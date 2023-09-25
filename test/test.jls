@@ -1,0 +1,21 @@
+(macrocall @eval "x = x+1")
+(call print "这是一条信息")
+(call println "，它会被print出来，接着上一个然后换行")
+
+(= (call comment x) (block nothing))
+(call comment "这是一个简单的注释，执行后返回nothing")
+(call println (call comment 
+    "看到没有，它就返回nothing（你执行的时候是看不到我这条信息的嘿嘿嘿）"
+))
+
+(macrocall @doc "这是一个文档字符串" 
+    (function (call add x y) (block 
+        (return (call + x y))
+    ))
+)
+(call comment 
+    "应用上面定义的「加法」函数……如果执行没错的话，它会打印出2.0"
+)
+(call println (call add 1 1.0))
+
+(call throw "这是我抛出的一个异常")
