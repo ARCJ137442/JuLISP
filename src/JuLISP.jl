@@ -3,41 +3,67 @@
 - 利用Julia与LISP相似的语言特性，把Julia的语法以LISP的风格重现
   - 可将Julia的抽象语法树「正向转换」成类LISP的S-表达式（故称「JuLISP」）
   - 亦可将字符串形式的「JuLISP」反向解析成Julia代码
-- ⚠注意：目前的「正向转换」在处理QuoteNode即「\$」的特性上仍不完善
-  - 若想贡献可参照
 """
 
 # begin
 module JuLISP
 
-export filterExpr, expr2JuLISP
-export s_expr, parse_s_expr, parse_s_expr_all
-export s_expr2Expr
+export filter_expr, expr2JuLISP
+export s_expr, str2sexpr, str2sexpr_all
+export sexpr2expr, parse_julisp
 export run_julisp, include_julisp, @julisp_str, @jls_str
 
 begin
     "Julia代码 => Julia AST => JuLISP"
 
     "把表达式里面的LineNumberNode全部去掉——即便是变成构造函数，也不应影响代码"
-    filterExpr(e::Any) = e
-    filterExpr(e::Expr) = Expr(
+    filter_expr(e::Any) = e
+    filter_expr(e::Expr) = Expr(
         e.head,
-        map(filterExpr, filter(x -> !(x isa LineNumberNode), e.args))...
+        map(filter_expr, filter(x -> !(x isa LineNumberNode), e.args))...
     )
 
-    "将Julia语法树转换成Lisp风格，简称「JuLISP」"
-    expr2JuLISP(s::String)::String = "\"$s\""
-    expr2JuLISP(s::Char)::String = "\'$s\'"
-    expr2JuLISP(s::Integer)::String = string(s)
-    expr2JuLISP(s::AbstractFloat)::String = string(s)
-    expr2JuLISP(s::Symbol)::String = String(s)
-    expr2JuLISP(args::Vector)::String = join(filter!(!isempty, [expr2JuLISP(ex) for ex in args]), " ")
-    expr2JuLISP(lnn::LineNumberNode)::String = ""
-    expr2JuLISP(e::Expr)::String = "($(e.head) $(expr2JuLISP(e.args)))"
-    "这个在文档字符串中出现，似乎没有什么解决方法。。。。"
-    expr2JuLISP(gr::GlobalRef)::String = String(gr.name)
+    "默认的缩进单元：四个空格"
+    const DEFAULT_INDENT_UNIT::String = "    "
+
+    """
+    将Julia语法树转换成Lisp风格，简称「JuLISP」
+    - 可选
+    """
+    expr2JuLISP(s::String; kw...)::String = repr(s)
+    expr2JuLISP(c::Char; kw...)::String = repr(c)
+    expr2JuLISP(i::Integer; kw...)::String = string(i)
+    expr2JuLISP(f::AbstractFloat; kw...)::String = string(f)
+    expr2JuLISP(s::Symbol; kw...)::String = String(s)
+    "主代码：数组⇒批量加入+子缩进递增"
+    expr2JuLISP(args::Vector; indent::Int=1, indent_unit::AbstractString=DEFAULT_INDENT_UNIT)::String = join(
+        filter!(
+            !isempty, # 非空过滤
+            [
+                expr2JuLISP(ex; indent=indent + 1) # 批量转换，缩进+1
+                for ex in args
+            ]
+        ), _expr_indent(indent_unit, indent)
+    )
+    "删掉LineNumberNode（暂时的？）"
+    expr2JuLISP(lnn::LineNumberNode; indent::Int=1, indent_unit::AbstractString=DEFAULT_INDENT_UNIT)::String = ""
+    "主代码之一：拆分成「头」「参数集」"
+    expr2JuLISP(e::Expr; indent::Int=1, indent_unit::AbstractString=DEFAULT_INDENT_UNIT)::String = (
+        "($(e.head)$(_expr_indent(indent_unit, indent))$(expr2JuLISP(e.args; indent=indent)))"
+    )
+    "📌这个在文档字符串中出现。【2023-09-26 16:26:09】目前的解决办法：转换为「Code.var\"@doc\"」"
+    expr2JuLISP(gr::GlobalRef; kw...)::String = expr2JuLISP(Expr(
+            :.,
+            Symbol(gr.mod),
+            Expr(:quote, Symbol(gr.name))
+        ); kw...) #= 这里需要继续传参 =#
     "处理「串联引用」的情况"
-    expr2JuLISP(qn::QuoteNode)::String = expr2JuLISP(Expr(:$, qn.value))
+    expr2JuLISP(qn::QuoteNode; kw...)::String = expr2JuLISP(Expr(:quote, qn.value); kw...)
+
+    "生成缩进"
+    _expr_indent(unit::AbstractString, n::Integer; newline::Bool=true)::String = (
+        (newline ? "\n" : "") * unit^n # （换行）+n*单元
+    )
 
 end
 
@@ -73,11 +99,12 @@ begin
     const S_EXPR_CLOSE_BRACKET::Char = ')'
     const S_EXPR_QUOTE::Char = '"'
     const S_EXPR_SEMI_QUOTE::Char = '\''
+    const S_EXPR_BACK_QUOTE::Char = '`'
 
     """
     S-表达式 → Tuple{Vararg{Vector}}（主入口）
     """
-    function parse_s_expr_all(str::AbstractString)::Tuple{Vararg{Vector}}
+    function str2sexpr_all(str::AbstractString)::Tuple{Vararg{Vector}}
 
         # * 直接用局部变量
         str = strip(str)
@@ -86,7 +113,7 @@ begin
         exprs::Vector{Vector} = []
 
         "起始值"
-        local tempSExpr::Vector, next_start::Int = _parse_s_expr(str, 1)
+        local tempSExpr::Vector, next_start::Int = _str2sexpr(str, 1)
         while !isempty(str)
             # 新增结果
             push!(exprs, tempSExpr)
@@ -98,7 +125,7 @@ begin
             end
             # 删去前面的字符
             # * 继续计算（注意：索引需要步进）
-            tempSExpr, next_start = _parse_s_expr(str,)
+            tempSExpr, next_start = _str2sexpr(str,)
         end
         error("你似乎来到了没有结果的荒原")
     end
@@ -113,13 +140,13 @@ begin
 
     示例：`(A (B C D) E "spa ce" 'c')` --> `[:A, [:B, :C, :D], :E, "spa ce", 'c']`
     """
-    parse_s_expr(str::AbstractString)::Vector = _parse_s_expr(str)[1] # [1]是「最终结果」
+    str2sexpr(str::AbstractString)::Vector = _str2sexpr(str)[1] # [1]是「最终结果」
 
     """
     内部的解析逻辑：
     - 返回: (值, 原字串str上解析的最后一个索引)
     """
-    function _parse_s_expr(s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{Vector,Int}
+    function _str2sexpr(s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{Vector,Int}
         # 判断首括弧
         s[start] == S_EXPR_OPEN_BRACKET || throw(ArgumentError("S-表达式必须以『(』为起始字符：$s"))
 
@@ -141,7 +168,7 @@ begin
             # * 中途遇到字串外开括弧：递归解析下一层，并将返回值添加进「内容」
             if si == S_EXPR_OPEN_BRACKET
                 # 递归解析
-                vec::Vector, i_sub_end = _parse_s_expr(s, i; end_i=end_i) # （复用end_i变量）
+                vec::Vector, i_sub_end = _str2sexpr(s, i; end_i=end_i) # （复用end_i变量）
                 # 添加值
                 push!(result, vec)
                 # 跳过已解析处，步进交给前面
@@ -152,7 +179,7 @@ begin
             # * 非空白、非括弧字符：解析原子值
             elseif !isspace(si)
                 # 递归解析
-                str::JuLISPAtom, i_sub_end = parse_s_expr_atom(s, si; start_i=i, end_i=end_i)
+                str::JuLISPAtom, i_sub_end = str2sexpr_atom(s, si; start_i=i, end_i=end_i)
                 # 添加值
                 push!(result, str)
                 # 跳过已解析处
@@ -162,15 +189,17 @@ begin
         end
     end
 
-    parse_s_expr_atom(s::AbstractString, si::AbstractChar=s[1]; start_i=1, end_i=lastindex(s))::Tuple{JuLISPAtom,Int} = (
+    str2sexpr_atom(s::AbstractString, si::AbstractChar=s[1]; start_i=1, end_i=lastindex(s))::Tuple{JuLISPAtom,Int} = (
         # 双引号⇒字符串（复用end_i变量）
         si === S_EXPR_QUOTE ? _parse_escaped_s_expr_string(s, start_i; end_i) :
         # 单引号⇒字符（复用end_i变量）
         si === S_EXPR_SEMI_QUOTE ? _parse_escaped_s_expr_char(s, start_i; end_i) :
+        # 反引号⇒字符（复用end_i变量）
+        si === S_EXPR_BACK_QUOTE ? _parse_escaped_s_expr_cmd(s, start_i; end_i) :
         # 数字⇒数值（复用end_i变量）
         isdigit(si) ? _parse_escaped_s_expr_number(s, start_i; end_i) :
         # 否则⇒符号
-        _parse_s_expr_symbol(s, start_i; end_i)
+        _str2sexpr_symbol(s, start_i; end_i)
     )
 
     """
@@ -189,7 +218,7 @@ begin
     `'c'` --> 'c'
     `"spac e()"` --> "spac e()"
     """
-    function _parse_s_expr_symbol(s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{Symbol,Int}
+    function _str2sexpr_symbol(s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{Symbol,Int}
         # 初始化
         local start_i::Int = start # 用于字符串截取
         local i::Int = start
@@ -210,36 +239,37 @@ begin
     解析「需要转义的字符串」
     - start：需转义字符串在一开始所处的位置（左侧引号「"」的位置）
     """
-    function _parse_escaped_s_expr_string(s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{String,Int}
-        # 初始化
-        local last_si::Char = s[start] # 这时候是引号
-
-        local start_i::Int = nextind(s, start) # 首先步进，用于字符串截取
-        local i::Int = start_i
-        i > end_i && error("无效的S-表达式「$s」")
-
-        # 跳转到下一个非「\"」的「"」
-        while true
-            si = s[i]
-            # 终止条件：非转义引号
-            if si == S_EXPR_QUOTE && last_si != '\\'
-                # 返回逆转义后的字符串(截取包括引号)
-                return Meta.parse(@view s[start:i]), i
-            end
-            # 步进
-            last_si = s[i]
-            i = nextind(s, i)
-            i > end_i && error("无效的S-表达式「$s」")
-            si = s[i]
-        end
-    end
+    _parse_escaped_s_expr_string(s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{String,Int} = _parse_escaped_s_expr_str(
+        S_EXPR_QUOTE, s, start; end_i
+    )
 
     """
     解析「需要转义的字符」
+
+    【2023-09-26 15:10:31】现在需要考虑解决「偶数个转义符」的情况
+    - 如`'asd fgh \\\\'`
     """
-    function _parse_escaped_s_expr_char(s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{Char,Int}
+    _parse_escaped_s_expr_char(s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{Char,Int} = _parse_escaped_s_expr_str(
+        S_EXPR_SEMI_QUOTE, s, start; end_i
+    )
+
+    """
+    解析「需要转义的命令」
+    - start：需转义字符串在一开始所处的位置（左侧引号「`」的位置）
+    """
+    _parse_escaped_s_expr_cmd(s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{String,Int} = _parse_escaped_s_expr_str(
+        S_EXPR_BACK_QUOTE, s, start; end_i
+    )
+
+    """
+    通用的解析「前后引用」的方式
+    - 字符串「"」
+    - 字符「'」
+    - 命令「`」
+    """
+    function _parse_escaped_s_expr_str(embrace::AbstractChar, s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{Any,Int}
         # 初始化
-        local last_si::Char = s[start]
+        local num_backslash::Int = 0
 
         local start_i::Int = nextind(s, start) # 用于字符串截取
         local i::Int = start_i
@@ -248,13 +278,19 @@ begin
         # 跳转到下一个非「\'」的「'」
         while true
             si = s[i]
-            # 终止条件：非转义单引号
-            if si == S_EXPR_SEMI_QUOTE && last_si != '\\'
-                # 直接调用Julia解析器返回相应的原子值
-                return Meta.parse(@view s[start:i]), i
+            # 反斜杠计数
+            if si === '\\'
+                num_backslash += 1
+            else
+                # 终止条件：非转义单引号&偶数个反斜杠
+                if si == embrace && iseven(num_backslash)
+                    # 直接调用Julia解析器返回相应的原子值
+                    return Meta.parse(@view s[start:i]), i
+                end
+                # 非反斜杠⇒清零
+                num_backslash = 0
             end
             # 步进
-            last_si = s[i]
             i = nextind(s, i)
             i > end_i && error("无效的S-表达式「$s」")
             si = s[i]
@@ -264,7 +300,6 @@ begin
     "解析数值"
     function _parse_escaped_s_expr_number(s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{Number,Int}
         # 初始化
-        local last_si::Char = s[start]
 
         local start_i::Int = nextind(s, start) # 用于字符串截取
         local i::Int = start_i
@@ -279,7 +314,6 @@ begin
                 return Meta.parse(@view s[start:prevind(s, i, 1)]), prevind(s, i, 1)
             end
             # 步进
-            last_si = s[i]
             i = nextind(s, i)
             i > end_i && error("无效的S-表达式「$s」")
             si = s[i]
@@ -291,39 +325,70 @@ end
 begin
     "S-Expr => Julia AST"
 
+    "（只会在:macrocall语境下执行）识别是否是先前打包的GlobalRef"
+    _isPackedGlobalRef(v::Vector) = (
+        length(v) > 1 &&
+        (@inbounds v[1]) === :call &&
+        (@inbounds v[2]) === :GlobalRef
+    )
 
     "数组类型⇒取头映射 | 对「宏调用」添加行号"
-    function s_expr2Expr(s_arr::Vector{Union{Vector,JuLISPAtom}}; l_num::Int=0)::Expr
+    function sexpr2expr(s_arr::Vector{Union{Vector,JuLISPAtom}}; l_num::Int=0)::Expr
         length(s_arr) < 1 && error("表达式「$s_arr」至少得有一个元素！")
         return (
             (@inbounds s_arr[1]) === :macrocall ?
             Expr( # ! 宏调用必须得有「上下文信息」即LineNumberNode
                 (@inbounds s_arr[1]),
-                s_arr[2],
+                ( # ! 处理GlobalRef
+                # _isPackedGlobalRef(s_arr[2]) ? eval(s_arr[2])
+                    sexpr2expr(s_arr[2])
+                ),
                 LineNumberNode(l_num, "none"),
-                map(s_expr2Expr, @inbounds s_arr[3:end])...
+                map(sexpr2expr, @inbounds s_arr[3:end])...
             ) :
             Expr(
                 (@inbounds s_arr[1]),
-                map(s_expr2Expr, @inbounds s_arr[2:end])...
+                map(sexpr2expr, @inbounds s_arr[2:end])...
             )
         )
     end
 
     "基础类型⇒原样返回"
-    s_expr2Expr(s_val::JuLISPAtom)::JuLISPAtom = s_val
+    sexpr2expr(s_val::JuLISPAtom)::JuLISPAtom = s_val
+
+    """
+    类似`Meta.parse`，把JuLISP字符串转换成Julia表达式
+    - 不会像
+    """
+    parse_julisp(str::AbstractString)::Expr = str |> str2sexpr |> sexpr2expr
+
+    "（不导出）上面`parse_julisp`的别名"
+    parse(str::AbstractString)::Expr = parse_julisp(str)
+
+    "类似`Meta.parseall`：会自动把「多个文本」"
+    parseall_julisp(str::AbstractString)::Expr = str |> str2sexpr_all .|> sexpr2expr |> _auto_toplevel
+    parseall(str::AbstractString)::Expr = parseall_julisp(str)
+
+    "自动根据「表达式是否只有一个」添加「顶层」表达式头:toplevel"
+    _auto_toplevel(exs::Tuple{Vararg{Expr}})::Expr = (
+        length(exs) === 1 ? (@inbounds exs[1]) :
+        Expr(:toplevel, exs...)
+    )
 
 end
 
-"""
-（无错误检查功能）入口方法：运行JuLISP代码
-"""
-run_julisp(str::AbstractString; eval_F::Function=Main.eval)::Any = (
-    str|>parse_s_expr_all.|>s_expr2Expr.|>eval_F
-)[end] # 所有表达式都会依次执行，但只取最后一个结果
-
 begin
     "临门一脚：组合&执行"
+
+    """
+    （无错误检查功能）入口方法：运行JuLISP代码
+    """
+    run_julisp(str::AbstractString; eval_F::Function=Main.eval)::Any = (
+        str|>str2sexpr_all.|>sexpr2expr.|>eval_F
+    )[end] # 所有表达式都会依次执行，但只取最后一个结果
+
+    "（不导出）上面`run_julisp`的别名"
+    run(str::AbstractString; eval_F::Function=Main.eval)::Any = run_julisp(str; eval_F)
 
     """
     入口方法：运行JuLISP代码
@@ -335,7 +400,7 @@ begin
       - `false`⇒每次try & catch后不再执行
     """
     function run_julisp(str::AbstractString, try_eval::Bool; eval_F::Function=Main.eval)::Any
-        local exprs::Tuple{Vararg{Expr}} = str |> parse_s_expr_all .|> s_expr2Expr
+        local exprs::Tuple{Vararg{Expr}} = str |> str2sexpr_all .|> sexpr2expr
         local current_result::Any
         for expr::Expr in exprs
             try
@@ -371,6 +436,9 @@ begin
 
     "读取一个文件，自动解释执行其中的JuLISP代码"
     include_julisp(path::AbstractString, args...; kw...)::Any = run_julisp(path |> read |> String, args...; kw...)
+
+    "（不导出）上面`include_julisp`的别名"
+    include(str::AbstractString, args...; kw...)::Any = include_julisp(str, args...; kw...)
 
 end
 
