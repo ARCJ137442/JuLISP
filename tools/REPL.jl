@@ -1,4 +1,4 @@
-include("../src/JuLISP.jl")
+(@isdefined JuLISP) || include("../src/JuLISP.jl")
 
 import .JuLISP: sexpr2expr, str2sexpr, str2sexpr_atom
 
@@ -7,13 +7,13 @@ import .JuLISP: sexpr2expr, str2sexpr, str2sexpr_atom
 - 应用：判断用户「是否要输入多行字符串」，兼容直接输入原始值（符号等）的做法
 """
 function try_evaluate(s::AbstractString)
-    # # 括号数都不相等⇒直接否决 # ! 现在不能使用「括号数」判断「是否完成」——因为有可能在注释里
-    # count('(', s) === count(')', s) || return nothing
     # 先尝试解析成S-表达式
     try
         return str2sexpr(s)
     catch
     end
+    # 括号数都不相等⇒直接否决 # ! 【2023-09-27 01:51:30】现在是在「完整解析失败」时做决策，避免「把单个括号当符号」的事情发生
+    count('(', s) === count(')', s) || return nothing
     # 再尝试解析成原始值
     try
         return str2sexpr_atom(s)[1]
@@ -33,8 +33,8 @@ function JuLISP_REPL(eval_F::Function=Main.eval)
         try
             # R
             printstyled(
-                (isempty(input) ? "JuLISP> " : "      | "); # 多行输入的第一行与其余行不同
-                color=:light_blue
+                (isempty(input) ? "julisp> " : "      | "); # 多行输入的第一行与其余行不同
+                color=:light_blue, bold=true
             )
             input *= readline(stdin) * '\n'
             s_arr = try_evaluate(input)
@@ -53,8 +53,9 @@ function JuLISP_REPL(eval_F::Function=Main.eval)
                     ) |> eval_F
                     # P
                     isnothing(result) || begin
-                        printstyled("      < "; color=:dark_blue)
-                        show(result)
+                        # printstyled("      < "; color=:dark_blue) # ! 现在与Julia REPL一致，不再使用类似浏览器控制台的输出格式
+                        show(stdout, "text/plain", result)
+                        println() # 因为只输出值，所以需要额外换行
                     end
                     println()
                 catch e # 打印堆栈
@@ -64,7 +65,6 @@ function JuLISP_REPL(eval_F::Function=Main.eval)
                     println()
                 end
                 input = "" # 执行后清除输入
-                println() # 执行后总是空一行
             end
             # L
         catch e
