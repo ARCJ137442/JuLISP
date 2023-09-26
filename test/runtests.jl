@@ -1,33 +1,37 @@
-include("../src/JuLISP.jl")
+# 解决路径问题
+rootPath = (
+    ispath("src") ? "." : # 始终在JuLISP的根目录下
+    ".."
+)
+
+# 先进行「自举测试」
+# include("../src/JuLISP.jl")
+include("test_self_evaluate.jl")
 
 try
     using .JuLISP
 catch
-end;
+end
 
 julisp"""
-(call println (
-    call + 1 3
-))
-(call + (
-    call * 1 2
-) 2)
+(call +
+    (call sqrt (
+        call + 1 3))
+    (call + 
+        (call * 1 2) 
+        2))
 """
 
-include_julisp("test.jls", true)
-include_julisp("./JuLISP/test/test.jls", true)
+include_julisp("$rootPath/test/test.jls", true)
 
+# 「概率论」测试
 @show pwd()
-data = read("./gll_20230925211635.jl")
+data = read("$rootPath/test/probabilities_20230925211635.jl")
 s = String(data)
 code = Meta.parseall(s)
 
 code.args[1]
 ss = code.args
-
-
-fc = filterExpr(code)
-eval(fc)
 
 
 test_code = quote
@@ -44,55 +48,8 @@ dump(test_code)
 test_code.args[8].args[1].name
 test_code.args[8].args[1].mod
 test_code.args[8].args[1].binding
+eval(test_code)
 
-ls = expr2LISP(test_code)
-println(ls)
-
-:(@eval x) |> filterExpr
-:(@eval x).head
-:(@eval x).args[1]
-:(@eval x).args[2]
-:(@eval x).args[3] |> filterExpr
-e = :(@eval x)
-ve = filter!(x -> !(x isa LineNumberNode), e.args)
-map!(filterExpr, e.args, e.args)
-e.args
-Expr(e.head, ve...,)
-Expr(e.head, e.args...)
-
-exl = expr2LISP(code)
+exl = expr2JuLISP(code)
 println(exl)
-Sys.cpu_info()
-Sys.CPU_NAME
-Sys.ARCH
-Sys.iswindows()
-Sys.isapple()
-
-
-s_expr2Expr(test_arr)
-s_expr2Expr(test_arr) |> eval
-
-begin
-    test = """(block (call + 1 1.0) (call println 1) (macrocall @eval "x = x+1") (macrocall @doc "这是一个文档字符串" (function (call f x y) (block (return (call + x y))))))"""
-    test_arr = parse_s_expr(test)
-end
-
-begin
-    v = parse_s_expr("(a 1 1 \"sp ace\" 'c' symbol)")
-    v[2]
-    string(v)
-end
-
-:(@eval 1)
-Expr(
-    :macrocall,
-    Symbol("@eval"),
-    LineNumberNode(0, "none"),
-    1
-)
-
-run_julisp(test)
 run_julisp(exl)
-run_julisp(quote
-    a = $exl
-end |> expr2LISP)
