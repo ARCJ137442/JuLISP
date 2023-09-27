@@ -81,7 +81,7 @@ begin
     "JuLISP => S-Expr"
 
     # "设置「原子对象」的类型"
-    const JuLISPAtom = Union{Symbol,String,Char,Number,Bool}
+    const JuLISPAtom = Union{Symbol,AbstractString,AbstractChar,Cmd,Number,Bool}
 
     """
     字符串 → S-表达式の值
@@ -297,10 +297,13 @@ begin
     """
     解析「需要转义的命令」
     - start：需转义字符串在一开始所处的位置（左侧引号「`」的位置）
+
+    ⚠【2023-09-27 15:34:03】注意：cmd看起来像是被解析成了一个「字串」（看起来"`cmd`"能被直接解析成`Cmd`对象），但实际上不是
+    - 这实际上用了Julia核心库的`Code.@cmd`(字符串)宏，并且Meta.parse("`1`")返回的是:(`1`)而非直接返回`1`
     """
-    _parse_escaped_s_expr_cmd(s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{String,Int} = _parse_escaped_s_expr_str(
+    _parse_escaped_s_expr_cmd(s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{Cmd,Int} = _parse_escaped_s_expr_str(
         S_EXPR_BACK_QUOTE, s, start; end_i
-    )
+    ) .|> (eval, identity) # 保留后面的数字，对前面的表达式解包
 
     """
     通用的解析「前后引用」的方式
@@ -308,7 +311,7 @@ begin
     - 字符「'」
     - 命令「`」
     """
-    function _parse_escaped_s_expr_str(embrace::AbstractChar, s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{Any,Int}
+    function _parse_escaped_s_expr_str(embrace::AbstractChar, s::AbstractString, start::Integer=1; end_i=lastindex(s))::Tuple{Any,Int} # 这里Cmd返回的看似一个「字串」，实际上是一个表达式
         # 初始化
         local num_backslash::Int = 0
 

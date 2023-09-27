@@ -1,7 +1,7 @@
 name = "JuLISP"
 uuid = "677d355e-b5b8-4cf2-85c5-0130d63978d3"
 authors = ["ARCJ137442 <61109168+ARCJ137442@users.noreply.github.com>"]
-version = "0.2.0"
+version = "0.2.1"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

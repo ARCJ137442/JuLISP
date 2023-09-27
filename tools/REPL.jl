@@ -10,14 +10,16 @@ function try_evaluate(s::AbstractString)
     # 先尝试解析成S-表达式
     try
         return str2sexpr(s)
-    catch
+    catch #= e
+        show(e) =#
     end
     # 括号数都不相等⇒直接否决 # ! 【2023-09-27 01:51:30】现在是在「完整解析失败」时做决策，避免「把单个括号当符号」的事情发生
     count('(', s) === count(')', s) || return nothing
     # 再尝试解析成原始值
     try
         return str2sexpr_atom(s)[1]
-    catch
+    catch #= e
+        show(e) =#
     end
     # 返回空值
     return nothing
@@ -39,11 +41,15 @@ function JuLISP_REPL(eval_F::Function=Main.eval)
             input *= readline(stdin) * '\n'
             s_arr = try_evaluate(input)
             # E
-            if (@inbounds input[1]) === '\n'  # 空白输入⇒自动跳过
+            if (
+                (@inbounds input[1]) === '\n' || # 空白输入⇒自动跳过
+                (@inbounds input[end-1]) === '\x1a' # 末尾Ctrl+Z "^Z"⇒跳过当前输入（inbound「只有一个⇒必定'\n'」）
+            )
                 println()
                 input = "" # 清除输入
                 continue
             end
+
             isnothing(s_arr) || begin
                 try # 执行单条命令
                     result = (
